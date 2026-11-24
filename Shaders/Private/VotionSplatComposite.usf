@@ -1,0 +1,50 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/VotionSplat/Private/VotionSplatCommon.ush"
+
+Texture2D SceneColorTex;
+Texture2D AccumTex;
+int2 OutputRectMin;
+int2 SceneRectMin;
+uint Mode;
+uint bOutputIsSrgbTexture;
+Texture3D InverseViewLut;
+SamplerState LutSampler;
+float LutSize;
+float4 Rec709ToWorking0;
+float4 Rec709ToWorking1;
+float4 Rec709ToWorking2;
+
+void MainPS(float4 SvPos : SV_Position, out float4 OutColor : SV_Target0)
+{
+	const int2 Local = int2(SvPos.xy) - OutputRectMin;
+	const float4 Scene = SceneColorTex.Load(int3(SceneRectMin + Local, 0));
+	const float4 Acc = AccumTex.Load(int3(Local, 0));
+	if (Mode == 0)
+	{
+		float3 Rgb = saturate(Acc.rgb + Scene.rgb * (1.0 - Acc.a));
+		if (bOutputIsSrgbTexture != 0)
+		{
+			Rgb = SrgbToLinear(Rgb);
+		}
+		OutColor = float4(Rgb, Scene.a);
+		return;
+	}
+	if (Acc.a < 1e-6)
+	{
+		OutColor = Scene;
+		return;
+	}
+	const float3 D = saturate(Acc.rgb / Acc.a);
+	float3 X;
+	if (Mode == 2)
+	{
+		const float3 Uvw = D * ((LutSize - 1.0) / LutSize) + (0.5 / LutSize);
+		X = InverseViewLut.SampleLevel(LutSampler, Uvw, 0).rgb;
+		X = float3(dot(X, Rec709ToWorking0.xyz), dot(X, Rec709ToWorking1.xyz), dot(X, Rec709ToWorking2.xyz));
+	}
+	else
+	{
+		X = SrgbToLinear(D);
+	}
+	OutColor = float4(X * Acc.a + Scene.rgb * (1.0 - Acc.a), Scene.a);
+}

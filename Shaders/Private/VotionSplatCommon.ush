@@ -1,0 +1,17 @@
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+
+#define PROFILE_GSPLAT_AA 0
+#define PROFILE_GSPLAT_CLASSIC 1
+#define PROFILE_LITEGS 2
+
+float SrgbToLinear1(float X)
+{
+	return X <= 0.04045 ? X / 12.92 : pow((X + 0.055) / 1.055, 2.4);
+}
+
+float3 SrgbToLinear(float3 C)
+{
+	return float3(SrgbToLinear1(C.r), SrgbToLinear1(C.g), SrgbToLinear1(C.b));
+}

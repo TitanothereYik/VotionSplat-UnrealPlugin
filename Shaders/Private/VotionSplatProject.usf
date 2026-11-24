@@ -1,0 +1,200 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/VotionSplat/Private/VotionSplatCommon.ush"
+
+uint NumSplats;
+uint ShCoeffs;
+uint ShDegree;
+uint Profile;
+float4x4 LocalToView;
+float4x4 ViewToClip;
+float3 CameraPosLocal;
+float2 ViewSize;
+float4 Intrinsics;
+float NearCm;
+float FarCm;
+StructuredBuffer<float4> SplatData;
+StructuredBuffer<float> ShRest;
+RWStructuredBuffer<float4> Projected;
+
+float3 EvalSH(uint Index, float3 DC, float3 Dir)
+{
+	const float C0 = 0.28209479177387814;
+	const float C1 = 0.4886025119029199;
+	const float C2_0 = 1.0925484305920792;
+	const float C2_1 = -1.0925484305920792;
+	const float C2_2 = 0.31539156525252005;
+	const float C2_3 = -1.0925484305920792;
+	const float C2_4 = 0.5462742152960396;
+	const float C3_0 = -0.5900435899266435;
+	const float C3_1 = 2.890611442640554;
+	const float C3_2 = -0.4570457994644658;
+	const float C3_3 = 0.3731763325901154;
+	const float C3_4 = -0.4570457994644658;
+	const float C3_5 = 1.445305721320277;
+	const float C3_6 = -0.5900435899266435;
+
+	float3 R = C0 * DC;
+	if (ShDegree < 1)
+	{
+		return R;
+	}
+	const float X = Dir.x;
+	const float Y = Dir.y;
+	const float Z = Dir.z;
+	const uint Base = Index * ShCoeffs * 3;
+	R += -C1 * Y * float3(ShRest[Base + 0], ShRest[Base + 1], ShRest[Base + 2])
+		+ C1 * Z * float3(ShRest[Base + 3], ShRest[Base + 4], ShRest[Base + 5])
+		- C1 * X * float3(ShRest[Base + 6], ShRest[Base + 7], ShRest[Base + 8]);
+	if (ShDegree < 2)
+	{
+		return R;
+	}
+	const float XX = X * X;
+	const float YY = Y * Y;
+	const float ZZ = Z * Z;
+	R += C2_0 * X * Y * float3(ShRest[Base + 9], ShRest[Base + 10], ShRest[Base + 11])
+		+ C2_1 * Y * Z * float3(ShRest[Base + 12], ShRest[Base + 13], ShRest[Base + 14])
+		+ C2_2 * (2.0 * ZZ - XX - YY) * float3(ShRest[Base + 15], ShRest[Base + 16], ShRest[Base + 17])
+		+ C2_3 * X * Z * float3(ShRest[Base + 18], ShRest[Base + 19], ShRest[Base + 20])
+		+ C2_4 * (XX - YY) * float3(ShRest[Base + 21], ShRest[Base + 22], ShRest[Base + 23]);
+	if (ShDegree < 3)
+	{
+		return R;
+	}
+	R += C3_0 * Y * (3.0 * XX - YY) * float3(ShRest[Base + 24], ShRest[Base + 25], ShRest[Base + 26])
+		+ C3_1 * X * Y * Z * float3(ShRest[Base + 27], ShRest[Base + 28], ShRest[Base + 29])
+		+ C3_2 * Y * (4.0 * ZZ - XX - YY) * float3(ShRest[Base + 30], ShRest[Base + 31], ShRest[Base + 32])
+		+ C3_3 * Z * (2.0 * ZZ - 3.0 * XX - 3.0 * YY) * float3(ShRest[Base + 33], ShRest[Base + 34], ShRest[Base + 35])
+		+ C3_4 * X * (4.0 * ZZ - XX - YY) * float3(ShRest[Base + 36], ShRest[Base + 37], ShRest[Base + 38])
+		+ C3_5 * Z * (XX - YY) * float3(ShRest[Base + 39], ShRest[Base + 40], ShRest[Base + 41])
+		+ C3_6 * X * (XX - 3.0 * YY) * float3(ShRest[Base + 42], ShRest[Base + 43], ShRest[Base + 44]);
+	return R;
+}
+
+[numthreads(256, 1, 1)]
+void ProjectCS(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint I = DTid.x;
+	if (I >= NumSplats)
+	{
+		return;
+	}
+	const uint O = I * 4;
+	Projected[O + 0] = float4(0, 0, 0, 0);
+	const float4 S0 = SplatData[O + 0];
+	const float4 S1 = SplatData[O + 1];
+	const float4 S2 = SplatData[O + 2];
+	const float4 S3 = SplatData[O + 3];
+
+	const float3 V = mul(float4(S0.xyz, 1), LocalToView).xyz;
+	const float3 C = float3(V.x, -V.y, V.z);
+	if (C.z < NearCm || C.z > FarCm)
+	{
+		return;
+	}
+	if (Profile == PROFILE_LITEGS && C.z <= NearCm)
+	{
+		return;
+	}
+
+	const float3x3 M = (float3x3)LocalToView;
+	const float3x3 S = float3x3(S1.x, S1.y, S1.z, S1.y, S1.w, S2.x, S1.z, S2.x, S2.y);
+	float3x3 Sc = mul(transpose(M), mul(S, M));
+	Sc[0][1] = -Sc[0][1];
+	Sc[1][0] = -Sc[1][0];
+	Sc[1][2] = -Sc[1][2];
+	Sc[2][1] = -Sc[2][1];
+
+	const float Fx = Intrinsics.x;
+	const float Fy = Intrinsics.y;
+	const float Cx = Intrinsics.z;
+	const float Cy = Intrinsics.w;
+	float Tx = C.x;
+	float Ty = C.y;
+	const float Tz = C.z;
+	if (Profile != PROFILE_LITEGS)
+	{
+		const float TanX = 0.5 * ViewSize.x / Fx;
+		const float TanY = 0.5 * ViewSize.y / Fy;
+		Tx = Tz * clamp(C.x / Tz, -(Cx / Fx + 0.3 * TanX), (ViewSize.x - Cx) / Fx + 0.3 * TanX);
+		Ty = Tz * clamp(C.y / Tz, -(Cy / Fy + 0.3 * TanY), (ViewSize.y - Cy) / Fy + 0.3 * TanY);
+	}
+	float2x3 J;
+	J[0] = float3(Fx / Tz, 0, -Fx * Tx / (Tz * Tz));
+	J[1] = float3(0, Fy / Tz, -Fy * Ty / (Tz * Tz));
+	const float2x2 Cov = mul(J, mul(Sc, transpose(J)));
+
+	float A = Cov[0][0];
+	float B = Cov[0][1];
+	float D = Cov[1][1];
+	const float Det0 = A * D - B * B;
+	A += 0.3;
+	D += 0.3;
+	const float Det = A * D - B * B;
+	if (Det <= 0)
+	{
+		return;
+	}
+	float Opac = S0.w;
+	if (Profile == PROFILE_GSPLAT_AA)
+	{
+		Opac *= sqrt(max(Det0 / Det, 0.0));
+	}
+	if (Opac < (1.0 / 255.0))
+	{
+		return;
+	}
+	const float3 Conic = float3(D / Det, -B / Det, A / Det);
+	const float2 Mean = float2(Fx * C.x / Tz + Cx, Fy * C.y / Tz + Cy);
+	float Ext = sqrt(2.0 * log((Profile == PROFILE_LITEGS ? 256.0 : 255.0) * Opac));
+	if (Profile != PROFILE_LITEGS)
+	{
+		Ext = min(Ext, 3.33);
+	}
+	const float RadX = ceil(Ext * sqrt(max(A, 0.0)));
+	const float RadY = ceil(Ext * sqrt(max(D, 0.0)));
+	if (Profile == PROFILE_LITEGS)
+	{
+		const float2 Ndc = Mean / ViewSize * 2.0 - 1.0;
+		if (abs(Ndc.x) > 1.3 || abs(Ndc.y) > 1.3)
+		{
+			return;
+		}
+	}
+	else
+	{
+		if (RadX <= 0 && RadY <= 0)
+		{
+			return;
+		}
+		if (Mean.x + RadX <= 0 || Mean.x - RadX >= ViewSize.x || Mean.y + RadY <= 0 || Mean.y - RadY >= ViewSize.y)
+		{
+			return;
+		}
+	}
+
+	const float3 Du = S0.xyz - CameraPosLocal;
+	const float3 Dir = normalize(float3(Du.x, -Du.z, -Du.y));
+	const float3 Rgb = max(EvalSH(I, S3.xyz, Dir) + 0.5, 0.0);
+
+	const float Mid = 0.5 * (A + D);
+	const float Disc = sqrt(max(Mid * Mid - Det, 0.0));
+	const float L1 = Mid + Disc;
+	const float L2 = max(Mid - Disc, 0.0);
+	// (B, L1-A) vanishes when the ellipse is axis-aligned and the major axis is x.
+	// (L1-D, B) is the same eigenvector and stays well conditioned in that case.
+	const float2 AxisA = float2(B, L1 - A);
+	const float2 AxisB = float2(L1 - D, B);
+	float2 V1 = dot(AxisA, AxisA) >= dot(AxisB, AxisB) ? AxisA : AxisB;
+	const float Len = length(V1);
+	V1 = Len > 1e-12 ? V1 / Len : float2(1, 0);
+	const float2 V2 = float2(-V1.y, V1.x);
+	const float E1 = Ext * sqrt(max(L1, 0.0)) + 0.01;
+	const float E2 = Ext * sqrt(max(L2, 0.0)) + 0.01;
+
+	const float4 Clip = mul(float4(V, 1), ViewToClip);
+	Projected[O + 0] = float4(Mean, Opac, Clip.z / Clip.w);
+	Projected[O + 1] = float4(Conic, 0);
+	Projected[O + 2] = float4(Rgb, 0);
+	Projected[O + 3] = float4(V1 * E1, V2 * E2);
+}

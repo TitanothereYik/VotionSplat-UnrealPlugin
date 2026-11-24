@@ -1,0 +1,22 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/VotionSplat/Private/VotionSplatCommon.ush"
+
+uint NumSplats;
+float3 DepthAxis;
+StructuredBuffer<float4> SplatData;
+RWBuffer<uint> OutKeys;
+RWBuffer<uint> OutValues;
+
+[numthreads(256, 1, 1)]
+void KeysCS(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint I = DTid.x;
+	if (I >= NumSplats)
+	{
+		return;
+	}
+	const uint U = asuint(dot(SplatData[I * 4].xyz, DepthAxis));
+	const uint Ordered = (U & 0x80000000u) ? ~U : (U | 0x80000000u);
+	OutKeys[I] = ~Ordered;
+	OutValues[I] = I;
+}

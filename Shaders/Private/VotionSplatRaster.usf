@@ -1,0 +1,32 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/VotionSplat/Private/VotionSplatCommon.ush"
+
+StructuredBuffer<float4> Projected;
+Buffer<uint> SortedIndices;
+float2 ViewSize;
+
+void MainVS(
+	uint VertexId : SV_VertexID,
+	uint InstanceId : SV_InstanceID,
+	out float4 OutPos : SV_Position,
+	out nointerpolation float4 OutP0 : TEXCOORD0,
+	out nointerpolation float3 OutConic : TEXCOORD1,
+	out nointerpolation float3 OutColor : TEXCOORD2)
+{
+	const uint S = SortedIndices[InstanceId];
+	const float4 P0 = Projected[S * 4 + 0];
+	OutP0 = P0;
+	OutConic = 0;
+	OutColor = 0;
+	if (P0.z <= 0)
+	{
+		OutPos = float4(2, 2, 2, 1);
+		return;
+	}
+	const float4 Ax = Projected[S * 4 + 3];
+	const float2 K = float2((VertexId & 1) ? 1.0 : -1.0, (VertexId & 2) ? 1.0 : -1.0);
+	const float2 Px = P0.xy + K.x * Ax.xy + K.y * Ax.zw;
+	OutPos = float4(Px.x / ViewSize.x * 2.0 - 1.0, 1.0 - Px.y / ViewSize.y * 2.0, 0.5, 1.0);
+	OutConic = Projected[S * 4 + 1].xyz;
+	OutColor = Projected[S * 4 + 2].xyz;
+}

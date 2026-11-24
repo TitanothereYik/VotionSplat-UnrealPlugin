@@ -1,0 +1,44 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/VotionSplat/Private/VotionSplatCommon.ush"
+
+Texture2D SceneDepth;
+int2 DepthRectMin;
+float2 DepthScale;
+uint bDepthTest;
+float AlphaMax;
+float AlphaMin;
+uint bDebugQuads;
+
+void MainPS(
+	float4 SvPos : SV_Position,
+	nointerpolation float4 P0 : TEXCOORD0,
+	nointerpolation float3 Conic : TEXCOORD1,
+	nointerpolation float3 Color : TEXCOORD2,
+	out float4 OutColor : SV_Target0)
+{
+	if (bDebugQuads != 0)
+	{
+		OutColor = float4(0.2, 0.2, 0.2, 0.2);
+		return;
+	}
+	const float2 Dl = P0.xy - SvPos.xy;
+	const float Sigma = 0.5 * (Conic.x * Dl.x * Dl.x + Conic.z * Dl.y * Dl.y) + Conic.y * Dl.x * Dl.y;
+	if (Sigma < 0)
+	{
+		discard;
+	}
+	const float Alpha = min(AlphaMax, P0.z * exp(-Sigma));
+	if (Alpha < AlphaMin)
+	{
+		discard;
+	}
+	if (bDepthTest != 0)
+	{
+		const int2 Dp = DepthRectMin + int2(floor(SvPos.xy * DepthScale));
+		if (SceneDepth.Load(int3(Dp, 0)).r > P0.w + 1e-7)
+		{
+			discard;
+		}
+	}
+	OutColor = float4(Color * Alpha, Alpha);
+}
