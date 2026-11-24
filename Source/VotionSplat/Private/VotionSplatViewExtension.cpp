@@ -26,6 +26,7 @@ static TAutoConsoleVariable<int32> CVarVotionDepth(TEXT("r.VotionSplat.DepthTest
 static TAutoConsoleVariable<int32> CVarVotionMode(TEXT("r.VotionSplat.CompositeMode"), -1, TEXT("0 display, 1 display-linear, 2 scene-linear. -1 automatic."), ECVF_RenderThreadSafe);
 static TAutoConsoleVariable<int32> CVarVotionQuads(TEXT("r.VotionSplat.DebugQuads"), 0, TEXT("Draw the splat quads as flat grey."), ECVF_RenderThreadSafe);
 static TAutoConsoleVariable<int32> CVarVotionLog(TEXT("r.VotionSplat.LogViews"), 0, TEXT("Log the composite mode once per second."), ECVF_RenderThreadSafe);
+static TAutoConsoleVariable<int32> CVarVotionAccum(TEXT("r.VotionSplat.AccumFormat"), 1, TEXT("Accumulation target. 0 RGBA16F, 1 RGBA32F. 16-bit is faster and fails the alpine_01 image gate, so 32-bit stays the default."), ECVF_RenderThreadSafe);
 
 static void WarnOnce(const TCHAR* Text)
 {
@@ -163,12 +164,13 @@ FScreenPassTexture FVotionSplatViewExtension::AfterTonemap_RenderThread(FRDGBuil
 	RDG_GPU_STAT_SCOPE(GraphBuilder, VotionSplat);
 	const FIntPoint Size = SceneColor.ViewRect.Size();
 	EPixelFormat AccumFormat = PF_FloatRGBA;
-	if (UE::PixelFormat::HasCapabilities(PF_A32B32G32R32F, EPixelFormatCapabilities::RenderTarget | EPixelFormatCapabilities::TextureBlendable))
+	if (CVarVotionAccum.GetValueOnRenderThread() == 1
+		&& UE::PixelFormat::HasCapabilities(PF_A32B32G32R32F, EPixelFormatCapabilities::RenderTarget | EPixelFormatCapabilities::TextureBlendable))
 	{
 		AccumFormat = PF_A32B32G32R32F;
 	}
 	FRDGTextureRef Accum = GraphBuilder.CreateTexture(
-		FRDGTextureDesc::Create2D(Size, AccumFormat, FClearValueBinding::Transparent, TexCreate_RenderTargetable | TexCreate_ShaderResource),
+		FRDGTextureDesc::Create2D(Size, AccumFormat, FClearValueBinding::Transparent, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV),
 		TEXT("VotionSplat.Accum"));
 	AddClearRenderTargetPass(GraphBuilder, Accum, FLinearColor::Transparent);
 
@@ -190,9 +192,9 @@ FScreenPassTexture FVotionSplatViewExtension::AfterTonemap_RenderThread(FRDGBuil
 				Params.DepthScale.X, Params.DepthScale.Y, Proxies.Num(), Params.Intrinsics.X, Params.Intrinsics.Y);
 		}
 	}
-	for (FVotionSplatSceneProxy* Proxy : Proxies)
+	for (int32 Index = 0; Index < Proxies.Num(); ++Index)
 	{
-		Proxy->RenderSplats(GraphBuilder, View, Params, Accum);
+		Proxies[Index]->RenderSplats(GraphBuilder, View, Params, Accum, Index == 0);
 	}
 
 	FScreenPassRenderTarget Output = Inputs.OverrideOutput;

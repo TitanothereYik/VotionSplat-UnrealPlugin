@@ -1,0 +1,125 @@
+#include "/Engine/Public/Platform.ush"
+
+// Exclusive prefix sum of NumItems uints in three dispatches: per-block sums, one-group block scan, per-item write.
+
+#define ITEMS 4
+#define THREADS 256
+#define BLOCK (THREADS * ITEMS)
+
+uint NumItems;
+uint NumGroups;
+uint Capacity;
+Buffer<uint> ScanIn;
+RWBuffer<uint> GroupSums;
+Buffer<uint> GroupSumsIn;
+RWBuffer<uint> GroupOffsets;
+Buffer<uint> GroupOffsetsIn;
+RWBuffer<uint> ScanOut;
+RWBuffer<uint> TotalsOut;
+
+groupshared uint Shared[1024];
+
+uint ItemAt(uint Index)
+{
+	return Index < NumItems ? ScanIn[Index] : 0u;
+}
+
+[numthreads(THREADS, 1, 1)]
+void ReduceCS(uint3 G : SV_GroupID, uint3 T : SV_GroupThreadID)
+{
+	const uint Base = G.x * BLOCK + T.x * ITEMS;
+	uint C = 0;
+	[unroll]
+	for (uint Item = 0; Item < ITEMS; ++Item)
+	{
+		C += ItemAt(Base + Item);
+	}
+	Shared[T.x] = C;
+	GroupMemoryBarrierWithGroupSync();
+	for (uint Step = THREADS / 2; Step > 0; Step >>= 1)
+	{
+		if (T.x < Step)
+		{
+			Shared[T.x] += Shared[T.x + Step];
+		}
+		GroupMemoryBarrierWithGroupSync();
+	}
+	if (T.x == 0)
+	{
+		GroupSums[G.x] = Shared[0];
+	}
+}
+
+[numthreads(1024, 1, 1)]
+void GroupsCS(uint3 T : SV_GroupThreadID)
+{
+	const uint Chunk = (NumGroups + 1023) / 1024;
+	const uint Begin = T.x * Chunk;
+	uint Sum = 0;
+	for (uint Item = 0; Item < Chunk; ++Item)
+	{
+		const uint Index = Begin + Item;
+		if (Index < NumGroups)
+		{
+			Sum += GroupSumsIn[Index];
+		}
+	}
+	Shared[T.x] = Sum;
+	GroupMemoryBarrierWithGroupSync();
+	for (uint Offset = 1; Offset < 1024; Offset <<= 1)
+	{
+		const uint Earlier = T.x >= Offset ? Shared[T.x - Offset] : 0;
+		GroupMemoryBarrierWithGroupSync();
+		Shared[T.x] += Earlier;
+		GroupMemoryBarrierWithGroupSync();
+	}
+	uint Running = Shared[T.x] - Sum;
+	for (uint Out = 0; Out < Chunk; ++Out)
+	{
+		const uint Index = Begin + Out;
+		if (Index < NumGroups)
+		{
+			GroupOffsets[Index] = Running;
+			Running += GroupSumsIn[Index];
+		}
+	}
+	if (T.x == 1023)
+	{
+		const uint Total = Shared[1023];
+		TotalsOut[0] = Total;
+		TotalsOut[1] = Total > Capacity ? 1u : 0u;
+	}
+}
+
+[numthreads(THREADS, 1, 1)]
+void WriteCS(uint3 G : SV_GroupID, uint3 T : SV_GroupThreadID)
+{
+	const uint Base = G.x * BLOCK + T.x * ITEMS;
+	uint V[ITEMS];
+	uint C = 0;
+	[unroll]
+	for (uint Item = 0; Item < ITEMS; ++Item)
+	{
+		V[Item] = ItemAt(Base + Item);
+		C += V[Item];
+	}
+	Shared[T.x] = C;
+	GroupMemoryBarrierWithGroupSync();
+	for (uint Offset = 1; Offset < THREADS; Offset <<= 1)
+	{
+		const uint Earlier = T.x >= Offset ? Shared[T.x - Offset] : 0;
+		GroupMemoryBarrierWithGroupSync();
+		Shared[T.x] += Earlier;
+		GroupMemoryBarrierWithGroupSync();
+	}
+	uint Running = GroupOffsetsIn[G.x] + Shared[T.x] - C;
+	[unroll]
+	for (uint Out = 0; Out < ITEMS; ++Out)
+	{
+		if (Base + Out < NumItems)
+		{
+			ScanOut[Base + Out] = Running;
+		}
+		Running += V[Out];
+	}
+}

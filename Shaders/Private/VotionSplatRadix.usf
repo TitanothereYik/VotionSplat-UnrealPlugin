@@ -1,0 +1,126 @@
+#include "/Engine/Public/Platform.ush"
+
+// One stable 4-bit LSD radix pass over TotalsIn[0] key/value pairs (clamped to PairCapacity).
+// Each thread owns RITEMS consecutive items, so ranks follow input order and equal keys keep their order.
+
+#define RTHREADS 256
+#define RITEMS 16
+#define RBLOCK (RTHREADS * RITEMS)
+#define RDIGITS 16
+
+uint Shift;
+uint NumBlocks;
+uint PairCapacity;
+Buffer<uint> TotalsIn;
+Buffer<uint> KeysIn;
+Buffer<uint> ValsIn;
+RWBuffer<uint> Hist;
+Buffer<uint> HistOffsetsIn;
+RWBuffer<uint> KeysOut;
+RWBuffer<uint> ValsOut;
+
+groupshared uint SCount[RDIGITS];
+groupshared uint SPrefix[RDIGITS * RTHREADS];
+groupshared uint SSegment[RDIGITS * 16];
+
+uint NumPairs()
+{
+	return min(TotalsIn[0], PairCapacity);
+}
+
+[numthreads(RTHREADS, 1, 1)]
+void HistCS(uint3 G : SV_GroupID, uint GI : SV_GroupIndex)
+{
+	if (GI < RDIGITS)
+	{
+		SCount[GI] = 0;
+	}
+	GroupMemoryBarrierWithGroupSync();
+	const uint P = NumPairs();
+	const uint Base = G.x * RBLOCK;
+	[unroll]
+	for (uint Item = 0; Item < RITEMS; ++Item)
+	{
+		const uint Index = Base + Item * RTHREADS + GI;
+		if (Index < P)
+		{
+			InterlockedAdd(SCount[(KeysIn[Index] >> Shift) & 15u], 1u);
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+	if (GI < RDIGITS)
+	{
+		Hist[GI * NumBlocks + G.x] = SCount[GI];
+	}
+}
+
+[numthreads(RTHREADS, 1, 1)]
+void ScatterCS(uint3 G : SV_GroupID, uint GI : SV_GroupIndex)
+{
+	const uint P = NumPairs();
+	const uint Base = G.x * RBLOCK + GI * RITEMS;
+	uint K[RITEMS];
+	uint D[RITEMS];
+	[unroll]
+	for (uint Item = 0; Item < RITEMS; ++Item)
+	{
+		const bool bValid = Base + Item < P;
+		K[Item] = bValid ? KeysIn[Base + Item] : 0u;
+		D[Item] = bValid ? ((K[Item] >> Shift) & 15u) : RDIGITS;
+	}
+	[unroll]
+	for (uint Digit = 0; Digit < RDIGITS; ++Digit)
+	{
+		uint C = 0;
+		[unroll]
+		for (uint Item = 0; Item < RITEMS; ++Item)
+		{
+			C += D[Item] == Digit ? 1u : 0u;
+		}
+		SPrefix[Digit * RTHREADS + GI] = C;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	// Thread GI scans digit GI/16 over the 16 threads of segment GI%16.
+	const uint ScanDigit = GI >> 4;
+	const uint Segment = GI & 15u;
+	const uint SegBase = ScanDigit * RTHREADS + Segment * 16;
+	uint Sum = 0;
+	[unroll]
+	for (uint S = 0; S < 16; ++S)
+	{
+		Sum += SPrefix[SegBase + S];
+	}
+	SSegment[ScanDigit * 16 + Segment] = Sum;
+	GroupMemoryBarrierWithGroupSync();
+	uint Running = 0;
+	for (uint E = 0; E < Segment; ++E)
+	{
+		Running += SSegment[ScanDigit * 16 + E];
+	}
+	[unroll]
+	for (uint S2 = 0; S2 < 16; ++S2)
+	{
+		const uint V = SPrefix[SegBase + S2];
+		SPrefix[SegBase + S2] = Running;
+		Running += V;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	[unroll]
+	for (uint Out = 0; Out < RITEMS; ++Out)
+	{
+		if (D[Out] < RDIGITS)
+		{
+			uint Rank = 0;
+			[unroll]
+			for (uint Before = 0; Before < Out; ++Before)
+			{
+				Rank += D[Before] == D[Out] ? 1u : 0u;
+			}
+			const uint Dst = HistOffsetsIn[D[Out] * NumBlocks + G.x] + SPrefix[D[Out] * RTHREADS + GI] + Rank;
+			KeysOut[Dst] = K[Out];
+			ValsOut[Dst] = ValsIn[Base + Out];
+		}
+	}
+}

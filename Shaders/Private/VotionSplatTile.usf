@@ -1,0 +1,223 @@
+#include "/Engine/Public/Platform.ush"
+
+// Tile rasterizer. DrawRecords hold the visible splats back to front (record J is behind J + 1).
+// Pairs are emitted in record order and sorted by tile with a stable sort, so each tile's list keeps that order
+// and RasterCS walks it from the end to blend front to back.
+
+#define TILE_SIZE 16
+#define RANGE_ITEMS 8
+
+uint NumSplats;
+uint TilesX;
+int2 ViewSizeI;
+uint PairCapacity;
+Buffer<uint> DrawArgsIn;
+StructuredBuffer<float4> DrawRecords;
+RWBuffer<uint> PairCounts;
+Buffer<uint> PairOffsetsIn;
+RWBuffer<uint> KeysOut;
+RWBuffer<uint> ValsOut;
+Buffer<uint> TotalsIn;
+Buffer<uint> KeysIn;
+RWBuffer<uint> TileStart;
+RWBuffer<uint> TileEnd;
+RWBuffer<uint> HwArgs;
+
+Buffer<uint> TileStartIn;
+Buffer<uint> TileEndIn;
+Buffer<uint> PairValues;
+Texture2D SceneDepth;
+int2 DepthRectMin;
+float2 DepthScale;
+uint bDepthTest;
+float AlphaMax;
+float AlphaMin;
+float StopT;
+RWTexture2D<float4> AccumOut;
+
+bool TileRect(uint J, out uint4 R)
+{
+	R = 0;
+	if (J >= NumSplats || J >= DrawArgsIn[1])
+	{
+		return false;
+	}
+	const float4 P0 = DrawRecords[J * 4 + 0];
+	const float4 Ax = DrawRecords[J * 4 + 3];
+	if (!(P0.z > 0))
+	{
+		return false;
+	}
+	const float Hx = abs(Ax.x) + abs(Ax.z);
+	const float Hy = abs(Ax.y) + abs(Ax.w);
+	const float X0 = max(ceil(P0.x - Hx - 0.5), 0.0);
+	const float Y0 = max(ceil(P0.y - Hy - 0.5), 0.0);
+	const float X1 = min(floor(P0.x + Hx - 0.5), float(ViewSizeI.x - 1));
+	const float Y1 = min(floor(P0.y + Hy - 0.5), float(ViewSizeI.y - 1));
+	if (!(X0 <= X1 && Y0 <= Y1))
+	{
+		return false;
+	}
+	R = uint4(uint(X0), uint(Y0), uint(X1), uint(Y1)) / TILE_SIZE;
+	return true;
+}
+
+[numthreads(256, 1, 1)]
+void CountCS(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint J = DTid.x;
+	if (J >= NumSplats)
+	{
+		return;
+	}
+	uint4 R;
+	PairCounts[J] = TileRect(J, R) ? (R.z - R.x + 1) * (R.w - R.y + 1) : 0u;
+}
+
+[numthreads(256, 1, 1)]
+void EmitCS(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint J = DTid.x;
+	uint4 R;
+	if (!TileRect(J, R))
+	{
+		return;
+	}
+	uint Slot = PairOffsetsIn[J];
+	for (uint Ty = R.y; Ty <= R.w; ++Ty)
+	{
+		for (uint Tx = R.x; Tx <= R.z; ++Tx)
+		{
+			if (Slot >= PairCapacity)
+			{
+				return;
+			}
+			KeysOut[Slot] = Ty * TilesX + Tx;
+			ValsOut[Slot] = J;
+			++Slot;
+		}
+	}
+}
+
+[numthreads(256, 1, 1)]
+void RangesCS(uint3 G : SV_GroupID, uint GI : SV_GroupIndex)
+{
+	const uint P = min(TotalsIn[0], PairCapacity);
+	[unroll]
+	for (uint Item = 0; Item < RANGE_ITEMS; ++Item)
+	{
+		const uint Index = (G.x * RANGE_ITEMS + Item) * 256 + GI;
+		if (Index < P)
+		{
+			const uint Tile = KeysIn[Index];
+			if (Index == 0 || KeysIn[Index - 1] != Tile)
+			{
+				TileStart[Tile] = Index;
+			}
+			if (Index + 1 == P || KeysIn[Index + 1] != Tile)
+			{
+				TileEnd[Tile] = Index + 1;
+			}
+		}
+	}
+}
+
+[numthreads(1, 1, 1)]
+void FinalizeCS()
+{
+	HwArgs[0] = 4;
+	HwArgs[1] = TotalsIn[1] != 0 ? DrawArgsIn[1] : 0u;
+	HwArgs[2] = 0;
+	HwArgs[3] = 0;
+}
+
+groupshared float4 SP0[TILE_SIZE * TILE_SIZE];
+groupshared float4 SConic[TILE_SIZE * TILE_SIZE];
+groupshared float4 SColor[TILE_SIZE * TILE_SIZE];
+groupshared uint SDone;
+
+[numthreads(TILE_SIZE, TILE_SIZE, 1)]
+void RasterCS(uint3 G : SV_GroupID, uint3 T : SV_GroupThreadID, uint GI : SV_GroupIndex)
+{
+	if (TotalsIn[1] != 0)
+	{
+		return;
+	}
+	const uint Tile = G.y * TilesX + G.x;
+	const uint2 Pix = G.xy * TILE_SIZE + T.xy;
+	const bool bInside = Pix.x < uint(ViewSizeI.x) && Pix.y < uint(ViewSizeI.y);
+	const float2 Px = float2(Pix) + 0.5;
+	float Depth = 0;
+	if (bInside && bDepthTest != 0)
+	{
+		Depth = SceneDepth.Load(int3(DepthRectMin + int2(floor(Px * DepthScale)), 0)).r;
+	}
+	const uint Begin = TileStartIn[Tile];
+	uint Hi = TileEndIn[Tile];
+	float3 C = 0;
+	float Tr = 1;
+	bool bDone = !bInside;
+	while (Hi > Begin)
+	{
+		if (GI == 0)
+		{
+			SDone = 0;
+		}
+		GroupMemoryBarrierWithGroupSync();
+		if (bDone)
+		{
+			InterlockedAdd(SDone, 1u);
+		}
+		GroupMemoryBarrierWithGroupSync();
+		if (SDone == TILE_SIZE * TILE_SIZE)
+		{
+			break;
+		}
+		const uint N = min(Hi - Begin, uint(TILE_SIZE * TILE_SIZE));
+		if (GI < N)
+		{
+			const uint J = PairValues[Hi - 1 - GI];
+			SP0[GI] = DrawRecords[J * 4 + 0];
+			SConic[GI] = DrawRecords[J * 4 + 1];
+			SColor[GI] = DrawRecords[J * 4 + 2];
+		}
+		GroupMemoryBarrierWithGroupSync();
+		if (!bDone)
+		{
+			for (uint K = 0; K < N; ++K)
+			{
+				const float4 P0 = SP0[K];
+				const float3 Conic = SConic[K].xyz;
+				const float2 Dl = P0.xy - Px;
+				const float Sigma = 0.5 * (Conic.x * Dl.x * Dl.x + Conic.z * Dl.y * Dl.y) + Conic.y * Dl.x * Dl.y;
+				if (Sigma < 0)
+				{
+					continue;
+				}
+				const float Alpha = min(AlphaMax, P0.z * exp(-Sigma));
+				if (Alpha < AlphaMin)
+				{
+					continue;
+				}
+				if (bDepthTest != 0 && Depth > P0.w + 1e-7)
+				{
+					continue;
+				}
+				const float NextT = Tr * (1.0 - Alpha);
+				if (NextT <= StopT)
+				{
+					bDone = true;
+					break;
+				}
+				C += SColor[K].xyz * (Alpha * Tr);
+				Tr = NextT;
+			}
+		}
+		Hi -= N;
+		GroupMemoryBarrierWithGroupSync();
+	}
+	if (bInside)
+	{
+		AccumOut[Pix] = float4(C, 1.0 - Tr);
+	}
+}

@@ -1,0 +1,128 @@
+#include "/Engine/Public/Platform.ush"
+
+#define ITEMS 4
+#define THREADS 256
+#define TILE (THREADS * ITEMS)
+
+uint NumSplats;
+uint NumGroups;
+StructuredBuffer<float4> Projected;
+Buffer<uint> SortedIndices;
+RWBuffer<uint> GroupCounts;
+Buffer<uint> GroupCountsIn;
+RWBuffer<uint> GroupOffsets;
+Buffer<uint> GroupOffsetsIn;
+RWBuffer<uint> DrawArgs;
+RWStructuredBuffer<float4> DrawRecords;
+
+groupshared uint Shared[1024];
+
+bool IsVisible(uint K)
+{
+	return K < NumSplats && Projected[SortedIndices[K] * 4].z > 0;
+}
+
+[numthreads(THREADS, 1, 1)]
+void CountCS(uint3 G : SV_GroupID, uint3 T : SV_GroupThreadID)
+{
+	const uint Base = G.x * TILE + T.x * ITEMS;
+	uint C = 0;
+	[unroll]
+	for (uint Item = 0; Item < ITEMS; ++Item)
+	{
+		C += IsVisible(Base + Item) ? 1u : 0u;
+	}
+	Shared[T.x] = C;
+	GroupMemoryBarrierWithGroupSync();
+	for (uint Step = THREADS / 2; Step > 0; Step >>= 1)
+	{
+		if (T.x < Step)
+		{
+			Shared[T.x] += Shared[T.x + Step];
+		}
+		GroupMemoryBarrierWithGroupSync();
+	}
+	if (T.x == 0)
+	{
+		GroupCounts[G.x] = Shared[0];
+	}
+}
+
+[numthreads(1024, 1, 1)]
+void ScanCS(uint3 T : SV_GroupThreadID)
+{
+	const uint Chunk = (NumGroups + 1023) / 1024;
+	const uint Begin = T.x * Chunk;
+	uint Sum = 0;
+	for (uint Item = 0; Item < Chunk; ++Item)
+	{
+		const uint Index = Begin + Item;
+		if (Index < NumGroups)
+		{
+			Sum += GroupCountsIn[Index];
+		}
+	}
+	Shared[T.x] = Sum;
+	GroupMemoryBarrierWithGroupSync();
+	for (uint Offset = 1; Offset < 1024; Offset <<= 1)
+	{
+		const uint Earlier = T.x >= Offset ? Shared[T.x - Offset] : 0;
+		GroupMemoryBarrierWithGroupSync();
+		Shared[T.x] += Earlier;
+		GroupMemoryBarrierWithGroupSync();
+	}
+	uint Running = Shared[T.x] - Sum;
+	for (uint Out = 0; Out < Chunk; ++Out)
+	{
+		const uint Index = Begin + Out;
+		if (Index < NumGroups)
+		{
+			GroupOffsets[Index] = Running;
+			Running += GroupCountsIn[Index];
+		}
+	}
+	if (T.x == 1023)
+	{
+		DrawArgs[0] = 4;
+		DrawArgs[1] = Shared[1023];
+		DrawArgs[2] = 0;
+		DrawArgs[3] = 0;
+	}
+}
+
+[numthreads(THREADS, 1, 1)]
+void WriteCS(uint3 G : SV_GroupID, uint3 T : SV_GroupThreadID)
+{
+	const uint Base = G.x * TILE + T.x * ITEMS;
+	uint Flags[ITEMS];
+	uint C = 0;
+	[unroll]
+	for (uint Item = 0; Item < ITEMS; ++Item)
+	{
+		Flags[Item] = IsVisible(Base + Item) ? 1u : 0u;
+		C += Flags[Item];
+	}
+	Shared[T.x] = C;
+	GroupMemoryBarrierWithGroupSync();
+	for (uint Offset = 1; Offset < THREADS; Offset <<= 1)
+	{
+		const uint Earlier = T.x >= Offset ? Shared[T.x - Offset] : 0;
+		GroupMemoryBarrierWithGroupSync();
+		Shared[T.x] += Earlier;
+		GroupMemoryBarrierWithGroupSync();
+	}
+	uint Slot = GroupOffsetsIn[G.x] + Shared[T.x] - C;
+	[unroll]
+	for (uint Out = 0; Out < ITEMS; ++Out)
+	{
+		if (Flags[Out] != 0)
+		{
+			const uint S = SortedIndices[Base + Out];
+			DrawRecords[Slot * 4 + 0] = Projected[S * 4 + 0];
+			DrawRecords[Slot * 4 + 1] = Projected[S * 4 + 1];
+			DrawRecords[Slot * 4 + 2] = Projected[S * 4 + 2];
+			DrawRecords[Slot * 4 + 3] = Projected[S * 4 + 3];
+			++Slot;
+		}
+	}
+}
