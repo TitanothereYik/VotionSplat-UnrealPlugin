@@ -92,7 +92,7 @@ static uint32 DetermineMode(const FSceneView& View)
 		if (Format != EDisplayOutputFormat::SDR_sRGB && Format != EDisplayOutputFormat::SDR_Rec709
 			&& Format != EDisplayOutputFormat::SDR_ExplicitGammaMapping)
 		{
-			WarnOnce(TEXT("HDR output is not supported by VotionSplat v1; drawing as SDR"));
+			WarnOnce(TEXT("HDR output is not supported by VotionSplat-UnrealPlugin; drawing as SDR"));
 		}
 	}
 	return 0u;

@@ -53,7 +53,7 @@ UVotionSplatFactory::UVotionSplatFactory()
 	bCreateNew = false;
 	bEditorImport = true;
 	bText = false;
-	Formats.Add(TEXT("ply;Votion Gaussian Splat"));
+	Formats.Add(TEXT("ply;VotionSplat-UnrealPlugin"));
 	ImportPriority = DefaultImportPriority + 100;
 }
 

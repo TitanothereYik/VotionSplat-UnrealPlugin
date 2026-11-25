@@ -13,7 +13,7 @@ class VOTIONSPLAT_API UVotionSplatComponent : public UPrimitiveComponent
 public:
 	UVotionSplatComponent();
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Votion Splat")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VotionSplat-UnrealPlugin")
 	TObjectPtr<UVotionSplatAsset> SplatAsset;
 
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;

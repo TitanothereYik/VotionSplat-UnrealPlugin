@@ -13,19 +13,19 @@ class VOTIONSPLAT_API UVotionSplatAsset : public UObject
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(VisibleAnywhere, Category = "Votion Splat")
+	UPROPERTY(VisibleAnywhere, Category = "VotionSplat-UnrealPlugin")
 	int32 NumSplats = 0;
 
-	UPROPERTY(VisibleAnywhere, Category = "Votion Splat")
+	UPROPERTY(VisibleAnywhere, Category = "VotionSplat-UnrealPlugin")
 	int32 ShDegree = 0;
 
-	UPROPERTY(VisibleAnywhere, Category = "Votion Splat")
+	UPROPERTY(VisibleAnywhere, Category = "VotionSplat-UnrealPlugin")
 	FString RasterProfile;
 
-	UPROPERTY(VisibleAnywhere, Category = "Votion Splat")
+	UPROPERTY(VisibleAnywhere, Category = "VotionSplat-UnrealPlugin")
 	float NearPlanePly = 0.01f;
 
-	UPROPERTY(VisibleAnywhere, Category = "Votion Splat")
+	UPROPERTY(VisibleAnywhere, Category = "VotionSplat-UnrealPlugin")
 	FBox LocalBounds = FBox(ForceInit);
 
 #if WITH_EDITORONLY_DATA

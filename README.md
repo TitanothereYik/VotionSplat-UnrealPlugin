@@ -1,6 +1,16 @@
-# Votion Splat 2.0
+# VotionSplat-UnrealPlugin 2.0
 
-Unreal Engine 5.5 plugin that drops a Votion Gaussian-splat PLY into a level and draws it with the same pixel rule the file was trained with. Windows 64-bit only. Version 2.0.0.
+<p align="center">
+  <img src="Docs/branding/votion-banner-seed-2.png" alt="VotionSplat" width="720">
+</p>
+
+Unreal Engine 5.5 plugin for the [VotionSplat](https://github.com/TitanothereYik/VotionSplat) app. It imports the `splat.ply` files that app exports and draws them with the same pixel rule the file was trained with. Windows 64-bit only. Version 2.0.0.
+
+<p align="center">
+  <a href="https://github.com/TitanothereYik/VotionSplat"><img src="Docs/branding/votion-logo-091-rounded.png" alt="VotionSplat" width="96"></a>
+</p>
+
+This repository is the Unreal plugin. [VotionSplat](https://github.com/TitanothereYik/VotionSplat) is the app that trains and exports the splats. Export with the app's Unreal / VotionSplat preset, then drag that `splat.ply` into Unreal. A PLY from another tool has no Votion tags, and this plugin rejects it.
 
 There is no import dialog and no per-actor material. The PLY header names the rasterizer, the near plane, and the spherical-harmonic degree, and the renderer follows those.
 
@@ -10,10 +20,10 @@ The editor has to be closed while the plugin folder is copied. Unreal keeps the 
 
 ### Prebuilt plugin
 
-Use this when you already have a packaged `VotionSplat` folder (it contains `VotionSplat.uplugin` and `Binaries`).
+Use this when you already have a packaged `VotionSplat-UnrealPlugin` folder (it contains `VotionSplat-UnrealPlugin.uplugin` and `Binaries`).
 
-1. Copy that folder to `<YourProject>/Plugins/VotionSplat`.
-2. Open the project. If Unreal asks to enable **Votion Splat**, confirm.
+1. Copy that folder to `<YourProject>/Plugins/VotionSplat-UnrealPlugin`.
+2. Open the project. If Unreal asks to enable **VotionSplat-UnrealPlugin**, confirm.
 3. Drag a Votion `splat.ply` into the Content Browser, then drag the new asset into the level.
 
 The prebuilt binaries are compiled for Unreal Editor 5.5 on Win64. A different engine version will refuse to load them.
@@ -22,8 +32,8 @@ The prebuilt binaries are compiled for Unreal Editor 5.5 on Win64. A different e
 
 This repository is source. `Binaries/` is not in git, so the editor compiles the plugin on first open. That needs Visual Studio 2022 with the C++ desktop workload, and the same MSVC toolchain Unreal 5.5 uses.
 
-1. Clone this repository to `<YourProject>/Plugins/VotionSplat`. The `.uplugin` file has to sit directly inside that folder.
-2. Open the `.uproject`. Enable **Votion Splat** when asked, and let the editor compile it.
+1. Clone this repository to `<YourProject>/Plugins/VotionSplat-UnrealPlugin`. The folder name has to match the `.uplugin` file.
+2. Open the `.uproject`. Enable **VotionSplat-UnrealPlugin** when asked, and let the editor compile it.
 3. Drag a Votion `splat.ply` into the Content Browser, then drag the asset into the level.
 
 To compile without opening the editor:
@@ -36,7 +46,7 @@ To compile without opening the editor:
 
 Drop the asset in the level and leave the defaults. The actor transform is honored. Training units are metres, Unreal units are centimetres, so a scale of 1 places the scan at 100 Unreal units per metre. Scale the actor to resize the scan.
 
-The file has to be a binary little-endian PLY exported with the Votion preset. The header carries:
+The file has to be a binary little-endian PLY exported by [VotionSplat](https://github.com/TitanothereYik/VotionSplat). The header carries:
 
 - `comment votion.version=1`
 - `comment votion.raster=` one of `gsplat_antialiased`, `gsplat_classic`, `litegs_classic`
@@ -71,7 +81,7 @@ Most splat plugins in Unreal still do three things that dominate both the frame 
 
 They draw one quad per splat and let the hardware blend every pixel that quad covers, including splats hidden behind an opaque surface of nearer splats. They rebuild the whole sort every frame. And they shade a single approximate Gaussian, then composite it in whatever colour space the post-process buffer happens to be in.
 
-Votion Splat 2.0 takes the other side of each of those.
+VotionSplat-UnrealPlugin takes the other side of each of those.
 
 The tile pass stops a pixel at the same transmittance the training rasterizer stops at, and it never shades the empty part of a quad. On an RTX 3090, at 1847×1237, with a still camera and 32-bit accumulation, the same scenes measured like this:
 

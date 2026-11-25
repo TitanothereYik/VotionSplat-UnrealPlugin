@@ -15,13 +15,13 @@ static TSharedPtr<FVotionSplatViewExtension, ESPMode::ThreadSafe> GVotionViewExt
 
 void FVotionSplatModule::StartupModule()
 {
-	if (TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("VotionSplat")); Plugin.IsValid())
+	if (TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("VotionSplat-UnrealPlugin")); Plugin.IsValid())
 	{
 		AddShaderSourceDirectoryMapping(TEXT("/Plugin/VotionSplat"), FPaths::Combine(Plugin->GetBaseDir(), TEXT("Shaders")));
 	}
 	else
 	{
-		UE_LOG(LogVotionSplat, Error, TEXT("VotionSplat plugin descriptor was not found"));
+		UE_LOG(LogVotionSplat, Error, TEXT("VotionSplat-UnrealPlugin descriptor was not found"));
 	}
 	if (GEngine)
 	{

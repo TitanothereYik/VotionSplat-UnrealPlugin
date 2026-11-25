@@ -17,7 +17,7 @@ void FVotionInverseViewLut::InitRHI(FRHICommandListBase& RHICmdList)
 	int32 N = 1;
 	const uint8* Texels = nullptr;
 	TArray<uint8> White;
-	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("VotionSplat"));
+	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("VotionSplat-UnrealPlugin"));
 	const FString Path = Plugin.IsValid()
 		? FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources/VotionSplat_InverseView.bin"))
 		: FString();

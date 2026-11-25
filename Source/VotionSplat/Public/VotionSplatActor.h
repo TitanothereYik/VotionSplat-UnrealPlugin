@@ -13,6 +13,6 @@ class VOTIONSPLAT_API AVotionSplatActor : public AActor
 public:
 	AVotionSplatActor();
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Votion Splat")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VotionSplat-UnrealPlugin")
 	TObjectPtr<UVotionSplatComponent> SplatComponent;
 };

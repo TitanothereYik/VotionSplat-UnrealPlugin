@@ -8,7 +8,7 @@
 
 UVotionSplatActorFactory::UVotionSplatActorFactory()
 {
-	DisplayName = LOCTEXT("ActorFactory", "Votion Splat");
+	DisplayName = LOCTEXT("ActorFactory", "VotionSplat-UnrealPlugin");
 	NewActorClass = AVotionSplatActor::StaticClass();
 	bUseSurfaceOrientation = false;
 }

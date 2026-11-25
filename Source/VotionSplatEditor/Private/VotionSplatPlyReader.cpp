@@ -223,7 +223,7 @@ bool VotionLoadPly(const FString& Path, FVotionPlyBuild& Out, FString& Error)
 	constexpr int32 Chunk = 262144;
 	TArray<float> Raw;
 	Raw.SetNumUninitialized(Chunk * (Header.Stride / 4));
-	FScopedSlowTask Task(float(Header.Count), NSLOCTEXT("VotionSplat", "Import", "Importing Votion splat"));
+	FScopedSlowTask Task(float(Header.Count), NSLOCTEXT("VotionSplat", "Import", "Importing VotionSplat-UnrealPlugin"));
 	Task.MakeDialog(false);
 	for (int64 Base = 0; Base < Header.Count; Base += Chunk)
 	{
