@@ -119,3 +119,7 @@ Set these in the editor console or in `DefaultEngine.ini`.
 | `r.VotionSplat.CompositeMode` | -1 | -1 follows the view. 0 display, 1 display-linear, 2 scene-linear. |
 | `r.VotionSplat.ViewCache` | 1 | Reuse the projection while the view is unchanged. |
 | `r.VotionSplat.SortReuse` | 1 | Reuse the sort while the view direction is unchanged. |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
